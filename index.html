@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MAC'S TRADING SIMULATOR CHALLENGE</title>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Titillium+Web:wght@700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      background: #121212;
+      color: #eee;
+      font-family: 'Inter', sans-serif;
+    }
+
+    h1 {
+      text-align: center;
+      color: gold;
+      font-family: 'Titillium Web', sans-serif;
+    }
+
+    .centered, #inputs, #status {
+      text-align: center;
+    }
+
+    .chartLabel {
+      font-family: 'Titillium Web';
+      font-weight: bold;
+      text-align: center;
+      margin: 8px 0;
+    }
+
+    .priceLabel { color: #1db954; }
+    .volumeLabel { color: #27a368; }
+    .rsiLabel { color: gold; }
+
+    #chart, #volumeChart, #rsiChart {
+      width: 98vw;
+      margin: 10px auto;
+      border-radius: 12px;
+    }
+
+    input, select {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      padding: 10px;
+      margin: 8px;
+      border-radius: 6px;
+    }
+
+    select option {
+      background: #222;
+      color: #fff;
+    }
+
+    button {
+      background: linear-gradient(135deg, #1db954, #27a368);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      margin: 10px;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #leaderboard {
+      background: rgba(255, 215, 0, 0.08);
+      border: 1px solid gold;
+      border-radius: 12px;
+      padding: 15px;
+      max-width: 300px;
+      margin: 20px auto;
+    }
+  </style>
+</head>
+<body>
+
+<h1>💹 MAC'S TRADING SIMULATOR CHALLENGE 💰</h1>
+
+<audio id="clickSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_c23e7cc82e.mp3"></audio>
+<audio id="startSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_1d34671fdc.mp3"></audio>
+
+<div id="inputs">
+  <input type="text" id="playerName" placeholder="Enter your name"><br>
+  <label for="modeSelect">Mode:</label>
+  <select id="modeSelect" onchange="handleModeChange()">
+    <option value="standard">Standard (5min)</option>
+    <option value="timeAttack">Time Attack (2min, 50x/100x only)</option>
+  </select><br>
+  <label for="leverageSelect">Leverage:</label>
+  <select id="leverageSelect">
+    <option value="1">1x</option>
+    <option value="5">5x</option>
+    <option value="10" selected>10x</option>
+    <option value="20">20x</option>
+    <option value="50">50x</option>
+    <option value="100">100x</option>
+  </select>
+</div>
+
+<div id="status">
+  <p id="balance">Balance: $500</p>
+  <p id="position">Position: None</p>
+  <p id="unrealized">Unrealized PnL: $0</p>
+  <p id="timer">Time Left: 300s</p>
+</div>
+
+<p class="chartLabel priceLabel">Price Chart</p>
+<div id="chart"></div>
+<p class="chartLabel volumeLabel">Volume Chart</p>
+<div id="volumeChart"></div>
+<p class="chartLabel rsiLabel">RSI Indicator</p>
+<div id="rsiChart"></div>
+
+<div class="centered">
+  <button onclick="startGame()">START GAME</button>
+  <button onclick="goLong()">GO LONG</button>
+  <button onclick="goShort()">GO SHORT</button>
+  <button onclick="closePosition()">CLOSE POSITION</button>
+</div>
+
+<div id="leaderboard">
+  <h3>🏆 Leaderboard</h3>
+  <ul id="leaderboardList"></ul>
+</div>
+
+<script>
+const clickSound = document.getElementById('clickSound');
+const startSound = document.getElementById('startSound');
+const API_URL = "https://sheetdb.io/api/v1/kaq8bevywrqfn";  // SheetDB link
+
+let balance = 500;
+let position = null;
+let timeLeft = 300;
+let timerId;
+let intervalId;
+let gameStarted = false;
+let lastClose = 1900;
+let candles = [], volumes = [], rsiValues = [];
+
+const balanceDisplay = document.getElementById('balance');
+const positionDisplay = document.getElementById('position');
+const unrealizedDisplay = document.getElementById('unrealized');
+const timerDisplay = document.getElementById('timer');
+
+const chartColors = {
+  candlestick: { up: '#1db954', down: '#d9534f' },
+  volume: { up: 'rgba(40,167,69,0.6)' },
+  rsi: '#FFD700'
+};
+
+const chartOptions = {
+  chart: { type: 'candlestick', height: 300 },
+  series: [{ name: 'Price', data: [] }],
+  xaxis: { type: 'datetime' },
+  theme: { mode: 'dark' },
+  legend: { show: true }
+};
+
+const volumeOptions = {
+  chart: { type: 'bar', height: 120 },
+  series: [{ name: 'Volume', data: [] }],
+  xaxis: { type: 'datetime' },
+  colors: [chartColors.volume.up],
+  theme: { mode: 'dark' },
+  legend: { show: true }
+};
+
+const rsiOptions = {
+  chart: { type: 'line', height: 120 },
+  series: [{ name: 'RSI', data: [] }],
+  xaxis: { type: 'datetime' },
+  yaxis: { min: 0, max: 100 },
+  colors: [chartColors.rsi],
+  theme: { mode: 'dark' },
+  legend: { show: true }
+};
+
+const chart = new ApexCharts(document.querySelector("#chart"), chartOptions);
+const volumeChart = new ApexCharts(document.querySelector("#volumeChart"), volumeOptions);
+const rsiChart = new ApexCharts(document.querySelector("#rsiChart"), rsiOptions);
+
+chart.render();
+volumeChart.render();
+rsiChart.render();
+
+function generateNextCandle(prevClose) {
+  const open = prevClose;
+  const high = open + Math.random() * 2;
+  const low = open - Math.random() * 2;
+  const close = low + Math.random() * (high - low);
+  return { y: [open, high, low, close] };
+}
+
+function calculateRSI(closes) {
+  if (closes.length < 15) return 50;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - 14; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+  }
+  const rs = gains / (losses || 1);
+  return 100 - (100 / (1 + rs));
+}
+
+function generateHistory(startPrice, numCandles) {
+  let data = [], vols = [], rsis = [];
+  let prev = startPrice;
+  let closes = [prev];
+  let time = new Date(Date.now() - numCandles * 60000);
+  for (let i = 0; i < numCandles; i++) {
+    const candle = generateNextCandle(prev);
+    candle.x = new Date(time.getTime() + i * 60000);
+    data.push(candle);
+    const volume = Math.floor(100 + Math.abs(candle.y[3] - candle.y[0]) * 50);
+    vols.push({ x: candle.x, y: volume });
+    closes.push(candle.y[3]);
+    const rsiVal = calculateRSI(closes);
+    rsis.push({ x: candle.x, y: rsiVal });
+    prev = candle.y[3];
+  }
+  lastClose = prev;
+  return { candles: data, volumes: vols, rsi: rsis };
+}
+
+function startGame() {
+  startSound.play();
+  const name = document.getElementById('playerName').value.trim();
+  if (!name) { alert("Enter your name!"); return; }
+  clearInterval(intervalId);
+  clearTimeout(timerId);
+  balance = 500;
+  timeLeft = document.getElementById('modeSelect').value === 'timeAttack' ? 120 : 300;
+  position = null;
+  const history = generateHistory(1900, 120);
+  candles = history.candles;
+  volumes = history.volumes;
+  rsiValues = history.rsi;
+  chart.updateSeries([{ name: 'Price', data: candles }]);
+  volumeChart.updateSeries([{ name: 'Volume', data: volumes }]);
+  rsiChart.updateSeries([{ name: 'RSI', data: rsiValues }]);
+  balanceDisplay.textContent = `Balance: $${balance.toFixed(2)}`;
+  positionDisplay.textContent = `Position: None`;
+  unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  timerDisplay.textContent = `Time Left: ${timeLeft}s`;
+  intervalId = setInterval(updateChart, 3000);
+  countdown();
+}
+
+function updateChart() {
+  const nextCandle = generateNextCandle(lastClose);
+  const lastTime = candles[candles.length - 1].x;
+  nextCandle.x = new Date(lastTime.getTime() + 60000);
+  candles.push(nextCandle);
+  chart.updateSeries([{ name: 'Price', data: candles }]);
+  const volume = Math.floor(100 + Math.abs(nextCandle.y[3] - nextCandle.y[0]) * 50);
+  volumes.push({ x: nextCandle.x, y: volume });
+  volumeChart.updateSeries([{ name: 'Volume', data: volumes }]);
+  const closes = candles.map(c => c.y[3]);
+  const rsiVal = calculateRSI(closes);
+  rsiValues.push({ x: nextCandle.x, y: rsiVal });
+  rsiChart.updateSeries([{ name: 'RSI', data: rsiValues }]);
+  lastClose = nextCandle.y[3];
+  updateUnrealizedPnL();
+}
+
+function goLong() {
+  clickSound.play();
+  if (!gameStarted) return;
+  if (!position) {
+    const leverage = parseInt(document.getElementById('leverageSelect').value);
+    position = { type: 'LONG', entryPrice: lastClose, leverageUsed: leverage };
+    positionDisplay.textContent = `Position: LONG @ $${position.entryPrice.toFixed(2)} (x${leverage})`;
+  } else { alert('Already holding a position!'); }
+}
+
+function goShort() {
+  clickSound.play();
+  if (!gameStarted) return;
+  if (!position) {
+    const leverage = parseInt(document.getElementById('leverageSelect').value);
+    position = { type: 'SHORT', entryPrice: lastClose, leverageUsed: leverage };
+    positionDisplay.textContent = `Position: SHORT @ $${position.entryPrice.toFixed(2)} (x${leverage})`;
+  } else { alert('Already holding a position!'); }
+}
+
+function closePosition() {
+  clickSound.play();
+  if (!gameStarted) return;
+  if (position) {
+    const exitPrice = lastClose;
+    let profit = 0;
+    if (position.type === 'LONG') {
+      profit = (exitPrice - position.entryPrice) * position.leverageUsed;
+    } else {
+      profit = (position.entryPrice - exitPrice) * position.leverageUsed;
+    }
+    balance += profit;
+    balanceDisplay.textContent = `Balance: $${balance.toFixed(2)}`;
+    alert(`Closed ${position.type} for ${profit >= 0 ? '+' : ''}${profit.toFixed(2)} (x${position.leverageUsed})`);
+    position = null;
+    positionDisplay.textContent = `Position: None`;
+    unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  } else { alert('No open position!'); }
+}
+
+function updateUnrealizedPnL() {
+  if (position) {
+    let pnl = 0;
+    if (position.type === 'LONG') pnl = (lastClose - position.entryPrice) * position.leverageUsed;
+    else pnl = (position.entryPrice - lastClose) * position.leverageUsed;
+    unrealizedDisplay.textContent = `Unrealized PnL: $${pnl.toFixed(2)} (x${position.leverageUsed})`;
+  } else {
+    unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  }
+}
+
+function countdown() {
+  if (timeLeft <= 0) {
+    clearInterval(intervalId);
+    alert(`Game Over! Final Balance: $${balance.toFixed(2)}`);
+    saveToLeaderboard(balance, document.getElementById('playerName').value.trim());
+  } else {
+    timeLeft--;
+    timerDisplay.textContent = `Time Left: ${timeLeft}s`;
+    timerId = setTimeout(countdown, 1000);
+  }
+}
+
+function saveToLeaderboard(finalBalance, name) {
+  fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: [{ name, balance: finalBalance }] })
+  }).then(() => loadLeaderboard());
+}
+
+function loadLeaderboard() {
+  fetch(API_URL)
+    .then(res => res.json())
+    .then(data => {
+      data.sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance));
+      const list = document.getElementById('leaderboardList');
+      list.innerHTML = '';
+      data.slice(0, 5).forEach((entry, i) => {
+        const li = document.createElement('li');
+        li.textContent = `#${i + 1}: ${entry.name} - $${parseFloat(entry.balance).toFixed(2)}`;
+        list.appendChild(li);
+      });
+    });
+}
+
+function handleModeChange() {
+  const mode = document.getElementById('modeSelect').value;
+  const leverageSelect = document.getElementById('leverageSelect');
+  leverageSelect.innerHTML = '';
+  if (mode === 'timeAttack') {
+    leverageSelect.innerHTML += '<option value="50">50x</option><option value="100">100x</option>';
+  } else {
+    leverageSelect.innerHTML += '<option value="1">1x</option><option value="5">5x</option><option value="10" selected>10x</option><option value="20">20x</option><option value="50">50x</option><option value="100">100x</option>';
+  }
+}
+
+loadLeaderboard();
+</script>
+
+</body>
+</html>
