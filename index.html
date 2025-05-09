@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MAC'S TRADING SIMULATOR CHALLENGE</title>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Titillium+Web:wght@700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #121212, #000000);
+      color: #eee;
+      font-family: 'Inter', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    h1 {
+      font-family: 'Titillium Web', sans-serif;
+      color: gold;
+      font-size: 2rem;
+      margin: 20px 0;
+      letter-spacing: 1px;
+      text-shadow: 0 0 15px rgba(255, 215, 0, 0.4);
+    }
+    #chart, #volumeChart, #rsiChart {
+      max-width: 95%;
+      margin: 10px auto;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(255,215,0,0.1);
+      overflow: hidden;
+    }
+    input, select {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      padding: 10px;
+      margin: 8px;
+      border-radius: 6px;
+      width: 200px;
+      font-size: 1rem;
+      backdrop-filter: blur(4px);
+    }
+    button {
+      background: linear-gradient(135deg, #1db954, #27a368);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      margin: 10px;
+      font-size: 1rem;
+      font-family: 'Inter', sans-serif;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+    }
+    button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+    }
+    p {
+      margin: 4px;
+      font-size: 1rem;
+      color: #ddd;
+    }
+    #leaderboard {
+      background: rgba(255, 215, 0, 0.08);
+      border: 1px solid gold;
+      border-radius: 12px;
+      padding: 15px;
+      max-width: 300px;
+      width: 90%;
+      margin: 20px auto;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 15px rgba(255,215,0,0.2);
+    }
+    #leaderboard h3 {
+      font-family: 'Titillium Web', sans-serif;
+      color: gold;
+      margin: 0 0 10px;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      text-align: left;
+      color: #ccc;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>💹 MAC'S TRADING SIMULATOR CHALLENGE 💰</h1>
+
+<input type="text" id="playerName" placeholder="Enter your name">
+<br>
+<label for="modeSelect">Mode:</label>
+<select id="modeSelect" onchange="handleModeChange()">
+  <option value="standard">Standard (5min)</option>
+  <option value="timeAttack">Time Attack (2min, 50x/100x only)</option>
+</select>
+<br>
+<label for="leverageSelect">Leverage:</label>
+<select id="leverageSelect">
+  <option value="1">1x</option>
+  <option value="5">5x</option>
+  <option value="10" selected>10x</option>
+  <option value="20">20x</option>
+  <option value="50">50x</option>
+  <option value="100">100x</option>
+</select>
+
+<p id="balance">Balance: $500</p>
+<p id="position">Position: None</p>
+<p id="unrealized">Unrealized PnL: $0</p>
+<p id="timer">Time Left: 300s</p>
+
+<div id="chart"></div>
+<div id="volumeChart"></div>
+<div id="rsiChart"></div>
+
+<button onclick="startGame()">START GAME</button>
+<button onclick="goLong()">GO LONG</button>
+<button onclick="goShort()">GO SHORT</button>
+<button onclick="closePosition()">CLOSE POSITION</button>
+
+<div id="leaderboard">
+  <h3>🏆 Leaderboard</h3>
+  <ul id="leaderboardList"></ul>
+</div>
+
+<script>
+let balance = 500;
+let position = null;
+let timeLeft = 300;
+let timerId;
+let intervalId;
+let gameStarted = false;
+let lastClose = 1900;
+let candles = [], volumes = [], rsiValues = [];
+let leaderboard = JSON.parse(localStorage.getItem('leaderboard')) || [];
+let gameMode = 'standard';
+let supportLevel, resistanceLevel;
+
+const balanceDisplay = document.getElementById('balance');
+const positionDisplay = document.getElementById('position');
+const unrealizedDisplay = document.getElementById('unrealized');
+const timerDisplay = document.getElementById('timer');
+
+const chartColors = {
+  candlestick: { up: '#1db954', down: '#d9534f' },
+  volume: { up: 'rgba(40,167,69,0.6)', down: 'rgba(217,83,79,0.6)' },
+  rsi: '#FFD700'
+};
+
+const chartOptions = {
+  chart: { type: 'candlestick', height: 300, background: '#1c1c1c' },
+  series: [{ data: [] }],
+  xaxis: { type: 'datetime' },
+  theme: { mode: 'dark' },
+  plotOptions: {
+    candlestick: {
+      colors: { upward: chartColors.candlestick.up, downward: chartColors.candlestick.down }
+    }
+  },
+  annotations: { yaxis: [] }
+};
+const volumeOptions = {
+  chart: { type: 'bar', height: 120, background: '#222' },
+  series: [{ name: 'Volume', data: [] }],
+  xaxis: { type: 'datetime', labels: { show: false } },
+  colors: [chartColors.volume.up],
+  theme: { mode: 'dark' }
+};
+const rsiOptions = {
+  chart: { type: 'line', height: 120, background: '#222' },
+  series: [{ name: 'RSI', data: [] }],
+  xaxis: { type: 'datetime', labels: { show: false } },
+  yaxis: { min: 0, max: 100 },
+  colors: [chartColors.rsi],
+  theme: { mode: 'dark' }
+};
+
+const chart = new ApexCharts(document.querySelector("#chart"), chartOptions);
+const volumeChart = new ApexCharts(document.querySelector("#volumeChart"), volumeOptions);
+const rsiChart = new ApexCharts(document.querySelector("#rsiChart"), rsiOptions);
+chart.render();
+volumeChart.render();
+rsiChart.render();
+
+function generateNextCandle(prevClose) {
+  const open = prevClose;
+  const high = open + Math.random() * 2;
+  const low = open - Math.random() * 2;
+  const close = low + Math.random() * (high - low);
+  return { y: [open, high, low, close] };
+}
+function calculateRSI(closes) {
+  if (closes.length < 15) return 50;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - 14; i < closes.length; i++) {
+    const diff = closes[i] - closes[i-1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+  }
+  const rs = gains / (losses || 1);
+  return 100 - (100 / (1 + rs));
+}
+function generateHistory(startPrice, numCandles) {
+  let data = [], vols = [], rsis = [];
+  let prev = startPrice;
+  let closes = [prev];
+  let time = new Date(Date.now() - numCandles * 60000);
+  for (let i = 0; i < numCandles; i++) {
+    const candle = generateNextCandle(prev);
+    candle.x = new Date(time.getTime() + i * 60000);
+    data.push(candle);
+    const volume = Math.floor(100 + Math.abs(candle.y[3]-candle.y[0])*50);
+    vols.push({ x: candle.x, y: volume });
+    closes.push(candle.y[3]);
+    const rsiVal = calculateRSI(closes);
+    rsis.push({ x: candle.x, y: rsiVal });
+    prev = candle.y[3];
+  }
+  supportLevel = Math.min(...data.map(c => c.y[2])) - 0.5;
+  resistanceLevel = Math.max(...data.map(c => c.y[1])) + 0.5;
+  lastClose = prev;
+  return { candles: data, volumes: vols, rsi: rsis };
+}
+
+function startGame() {
+  const name = document.getElementById('playerName').value.trim();
+  if (!name) { alert("Enter your name!"); return; }
+  clearInterval(intervalId); clearTimeout(timerId);
+  gameStarted = true; balance = 500;
+  timeLeft = (gameMode === 'timeAttack') ? 120 : 300;
+  position = null;
+  const history = generateHistory(1900, 120);
+  candles = history.candles;
+  volumes = history.volumes;
+  rsiValues = history.rsi;
+  chart.updateSeries([{ data: candles }]);
+  volumeChart.updateSeries([{ data: volumes }]);
+  rsiChart.updateSeries([{ data: rsiValues }]);
+  chart.updateOptions({ annotations: { yaxis: [
+    { y: supportLevel, borderColor: '#0f0', label: { text: 'Support', style: { background: '#0f0', color: '#000' } } },
+    { y: resistanceLevel, borderColor: '#f00', label: { text: 'Resistance', style: { background: '#f00', color: '#000' } } }
+  ]}});
+  balanceDisplay.textContent = `Balance: $${balance.toFixed(2)}`;
+  positionDisplay.textContent = `Position: None`;
+  unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  timerDisplay.textContent = `Time Left: ${timeLeft}s`;
+  intervalId = setInterval(updateChart, 3000);
+  countdown();
+}
+function updateChart() {
+  const nextCandle = generateNextCandle(lastClose);
+  const lastTime = candles[candles.length-1].x;
+  nextCandle.x = new Date(lastTime.getTime() + 60000);
+  candles.push(nextCandle);
+  chart.updateSeries([{ data: candles }]);
+  const volume = Math.floor(100 + Math.abs(nextCandle.y[3]-nextCandle.y[0])*50);
+  volumes.push({ x: nextCandle.x, y: volume });
+  volumeChart.updateSeries([{ data: volumes }]);
+  const closes = candles.map(c => c.y[3]);
+  const rsiVal = calculateRSI(closes);
+  rsiValues.push({ x: nextCandle.x, y: rsiVal });
+  rsiChart.updateSeries([{ data: rsiValues }]);
+  lastClose = nextCandle.y[3];
+  updateUnrealizedPnL();
+}
+function goLong() {
+  if (!gameStarted) return;
+  if (!position) {
+    const leverage = parseInt(document.getElementById('leverageSelect').value);
+    position = { type: 'LONG', entryPrice: lastClose, leverageUsed: leverage };
+    positionDisplay.textContent = `Position: LONG @ $${position.entryPrice.toFixed(2)} (x${leverage})`;
+  } else { alert('Already holding a position!'); }
+}
+function goShort() {
+  if (!gameStarted) return;
+  if (!position) {
+    const leverage = parseInt(document.getElementById('leverageSelect').value);
+    position = { type: 'SHORT', entryPrice: lastClose, leverageUsed: leverage };
+    positionDisplay.textContent = `Position: SHORT @ $${position.entryPrice.toFixed(2)} (x${leverage})`;
+  } else { alert('Already holding a position!'); }
+}
+function closePosition() {
+  if (!gameStarted) return;
+  if (position) {
+    const exitPrice = lastClose;
+    let profit = 0;
+    if (position.type === 'LONG') {
+      profit = (exitPrice - position.entryPrice) * position.leverageUsed;
+    } else {
+      profit = (position.entryPrice - exitPrice) * position.leverageUsed;
+    }
+    balance += profit;
+    balanceDisplay.textContent = `Balance: $${balance.toFixed(2)}`;
+    alert(`Closed ${position.type} for ${profit >= 0 ? '+' : ''}${profit.toFixed(2)} (x${position.leverageUsed})`);
+    position = null;
+    positionDisplay.textContent = `Position: None`;
+    unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  } else { alert('No open position!'); }
+}
+function updateUnrealizedPnL() {
+  if (position) {
+    let pnl = 0;
+    if (position.type === 'LONG') pnl = (lastClose - position.entryPrice) * position.leverageUsed;
+    else pnl = (position.entryPrice - lastClose) * position.leverageUsed;
+    unrealizedDisplay.textContent = `Unrealized PnL: $${pnl.toFixed(2)} (x${position.leverageUsed})`;
+  } else {
+    unrealizedDisplay.textContent = `Unrealized PnL: $0`;
+  }
+}
+function countdown() {
+  if (timeLeft <= 0) {
+    clearInterval(intervalId);
+    alert(`Game Over! Final Balance: $${balance.toFixed(2)}`);
+    saveToLeaderboard(balance, document.getElementById('playerName').value.trim());
+  } else {
+    timeLeft--;
+    timerDisplay.textContent = `Time Left: ${timeLeft}s`;
+    timerId = setTimeout(countdown, 1000);
+  }
+}
+function saveToLeaderboard(finalBalance, name) {
+  leaderboard.push({ name, balance: finalBalance });
+  leaderboard.sort((a,b) => b.balance - a.balance);
+  leaderboard = leaderboard.slice(0,5);
+  localStorage.setItem('leaderboard', JSON.stringify(leaderboard));
+  renderLeaderboard();
+}
+function renderLeaderboard() {
+  document.getElementById('leaderboardList').innerHTML = '';
+  leaderboard.forEach((entry, index) => {
+    const li = document.createElement('li');
+    li.textContent = `#${index+1}: ${entry.name} - $${entry.balance.toFixed(2)}`;
+    document.getElementById('leaderboardList').appendChild(li);
+  });
+}
+function handleModeChange() {
+  const mode = document.getElementById('modeSelect').value;
+  gameMode = mode;
+  const leverageSelect = document.getElementById('leverageSelect');
+  leverageSelect.innerHTML = '';
+  if (mode === 'timeAttack') {
+    leverageSelect.innerHTML += '<option value="50">50x</option><option value="100">100x</option>';
+  } else {
+    leverageSelect.innerHTML += '<option value="1">1x</option><option value="5">5x</option><option value="10" selected>10x</option><option value="20">20x</option><option value="50">50x</option><option value="100">100x</option>';
+  }
+}
+renderLeaderboard();
+</script>
+
+</body>
+</html>
